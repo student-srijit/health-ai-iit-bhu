@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KinetiCareRiskRequest",
+  "type": "object",
+  "required": [
+    "patient_id",
+    "dwell_times_ms",
+    "flight_times_ms",
+    "imu_accel_magnitude"
+  ],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "dwell_times_ms": {
+      "type": "array",
+      "minItems": 8,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "flight_times_ms": {
+      "type": "array",
+      "minItems": 8,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "imu_accel_magnitude": {
+      "type": "array",
+      "minItems": 64,
+      "items": { "type": "number" }
+    },
+    "sampling_rate_hz": { "type": "number", "minimum": 1, "default": 50 }
+  },
+  "additionalProperties": false
+}

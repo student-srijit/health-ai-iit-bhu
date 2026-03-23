@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PpgPredictResponse",
+  "type": "object",
+  "required": ["patient_id", "map", "change_map", "ratio_map", "risk_band"],
+  "properties": {
+    "patient_id": { "type": "string" },
+    "map": { "type": "number" },
+    "change_map": { "type": "number" },
+    "ratio_map": { "type": "number" },
+    "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "additionalProperties": false
+}

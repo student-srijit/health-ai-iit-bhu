@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OrchestratorSummaryRequest",
+  "type": "object",
+  "required": ["patient_id", "depression", "ppg", "kineticare"],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "depression": {
+      "type": "object",
+      "required": ["depression_score", "risk_band"],
+      "properties": {
+        "depression_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "risk_band": { "type": "string", "enum": ["low", "medium", "high"] }
+      },
+      "additionalProperties": true
+    },
+    "ppg": {
+      "type": "object",
+      "required": ["map", "change_map", "ratio_map", "risk_band"],
+      "properties": {
+        "map": { "type": "number" },
+        "change_map": { "type": "number" },
+        "ratio_map": { "type": "number" },
+        "risk_band": { "type": "string", "enum": ["low", "medium", "high"] }
+      },
+      "additionalProperties": true
+    },
+    "camera_quality": {
+      "type": "object",
+      "required": ["status", "camera_sqi", "spoof_detected"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["accepted", "blocked", "not_provided"]
+        },
+        "camera_sqi": { "type": "number", "minimum": 0, "maximum": 1 },
+        "spoof_detected": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "kineticare": {
+      "type": "object",
+      "required": ["risk_band"],
+      "properties": {
+        "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+        "session_quality": {
+          "type": "string",
+          "enum": ["good", "warning", "poor"]
+        },
+        "signals_used": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["keystroke", "imu"] }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

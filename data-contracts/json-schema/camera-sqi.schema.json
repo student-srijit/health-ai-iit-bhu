@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CameraSQI",
+  "type": "object",
+  "required": [
+    "frame_quality_score",
+    "blur_score",
+    "face_tracking_confidence",
+    "spoof_probability",
+    "accepted_window_ratio"
+  ],
+  "properties": {
+    "frame_quality_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "blur_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "face_tracking_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "spoof_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+    "accepted_window_ratio": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "additionalProperties": false
+}
