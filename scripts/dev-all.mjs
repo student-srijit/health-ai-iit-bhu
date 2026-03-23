@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 
 const localVenvPython = path.join(
@@ -23,8 +24,78 @@ const pythonExe =
       ? parentVenvPython
       : "python");
 
+function isValidPort(port) {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function parsePort(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return isValidPort(parsed) ? parsed : fallback;
+}
+
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+
+    server.once("error", () => {
+      resolve(false);
+    });
+
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+
+    server.listen(port, "0.0.0.0");
+  });
+}
+
+async function findFreePort(preferredPort) {
+  for (let candidate = preferredPort; candidate <= 65535; candidate += 1) {
+    // Sequential probing guarantees no silent fallback to a hardcoded alternate port.
+    // It picks the first actually available port from the requested starting point.
+    // This keeps behavior deterministic while handling stale listeners cleanly.
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPortFree(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`No free port found starting at ${preferredPort}`);
+}
+
+const preferredPorts = {
+  depression: parsePort(process.env.DEPRESSION_PORT, 8001),
+  ppg: parsePort(process.env.PPG_PORT, 8002),
+  orchestrator: parsePort(process.env.ORCHESTRATOR_PORT, 8003),
+  kineticare: parsePort(process.env.KINETICARE_PORT, 8004),
+};
+
+const servicePorts = {
+  depression: await findFreePort(preferredPorts.depression),
+  ppg: await findFreePort(preferredPorts.ppg),
+  orchestrator: await findFreePort(preferredPorts.orchestrator),
+  kineticare: await findFreePort(preferredPorts.kineticare),
+};
+
+const webEnv = {
+  ...process.env,
+  DEPRESSION_SERVICE_URL: `http://127.0.0.1:${servicePorts.depression}`,
+  PPG_SERVICE_URL: `http://127.0.0.1:${servicePorts.ppg}`,
+  ORCHESTRATOR_SERVICE_URL: `http://127.0.0.1:${servicePorts.orchestrator}`,
+  KINETICARE_SERVICE_URL: `http://127.0.0.1:${servicePorts.kineticare}`,
+};
+
+console.log(
+  `[dev-all] Using ports depression=${servicePorts.depression}, ppg=${servicePorts.ppg}, orchestrator=${servicePorts.orchestrator}, kineticare=${servicePorts.kineticare}`,
+);
+
 const services = [
-  { name: "web", command: "npm", args: ["--prefix", "apps/web", "run", "dev"] },
+  {
+    name: "web",
+    command: "npm",
+    args: ["--prefix", "apps/web", "run", "dev"],
+    env: webEnv,
+  },
   {
     name: "depression",
     command: pythonExe,
@@ -37,7 +108,7 @@ const services = [
       "--host",
       "0.0.0.0",
       "--port",
-      "8001",
+      String(servicePorts.depression),
     ],
   },
   {
@@ -52,7 +123,7 @@ const services = [
       "--host",
       "0.0.0.0",
       "--port",
-      "8002",
+      String(servicePorts.ppg),
     ],
   },
   {
@@ -67,7 +138,7 @@ const services = [
       "--host",
       "0.0.0.0",
       "--port",
-      "8003",
+      String(servicePorts.orchestrator),
     ],
   },
   {
@@ -82,7 +153,7 @@ const services = [
       "--host",
       "0.0.0.0",
       "--port",
-      "8004",
+      String(servicePorts.kineticare),
     ],
   },
 ];
@@ -96,7 +167,7 @@ function startService(service) {
   const child = spawn(service.command, service.args, {
     cwd: process.cwd(),
     shell: true,
-    env: process.env,
+    env: service.env || process.env,
     stdio: ["inherit", "pipe", "pipe"],
   });
 

@@ -11,6 +11,15 @@ interface CapturedFeatures {
   audioFeatures: number[];
   videoFeatures: number[];
   framesProcessed: number;
+  cameraMetrics: {
+    frame_quality_score: number;
+    blur_score: number;
+    face_tracking_confidence: number;
+    spoof_probability: number;
+    accepted_window_ratio: number;
+    laplacian_variance: number;
+    frequency_spoof_score: number;
+  };
 }
 
 interface DepressionResult {
@@ -44,6 +53,7 @@ interface AnalysisPayload {
   kineticare?: KineticareResult;
   orchestrator?: OrchestratorResult;
   patient_id?: string;
+  warnings?: string[];
 }
 
 export default function PillarDepressionPage() {
@@ -58,6 +68,8 @@ export default function PillarDepressionPage() {
   // KinetiCare Sensors
   const keyPressMap = useRef<Record<string, number>>({});
   const lastKeyRelease = useRef<number | null>(null);
+  const imuFirstTs = useRef<number | null>(null);
+  const imuLastTs = useRef<number | null>(null);
   const dwellTimes = useRef<number[]>([]);
   const flightTimes = useRef<number[]>([]);
   const imuBuffer = useRef<number[]>([]);
@@ -68,7 +80,12 @@ export default function PillarDepressionPage() {
       const acc = event.accelerationIncludingGravity || event.acceleration;
       if (acc) {
         const mag = Math.sqrt((acc.x || 0)**2 + (acc.y || 0)**2 + (acc.z || 0)**2);
-        if (mag > 0) imuBuffer.current.push(mag);
+        if (mag > 0) {
+          imuBuffer.current.push(mag);
+          const now = performance.now();
+          if (imuFirstTs.current === null) imuFirstTs.current = now;
+          imuLastTs.current = now;
+        }
       }
     };
     window.addEventListener("devicemotion", handleMotion);
@@ -99,21 +116,35 @@ export default function PillarDepressionPage() {
     setLoading(true);
     setError(null);
     try {
+      const imuRate =
+        imuFirstTs.current !== null &&
+        imuLastTs.current !== null &&
+        imuLastTs.current > imuFirstTs.current
+          ? imuBuffer.current.length / ((imuLastTs.current - imuFirstTs.current) / 1000)
+          : null;
+
+      const requestBody: Record<string, unknown> = {
+        journalText,
+        baselineMap: 90,
+        useCamera: !!features,
+        simulateSpoof,
+        audioFeatures: features?.audioFeatures,
+        videoFeatures: features?.videoFeatures,
+        cameraMetrics: features?.cameraMetrics,
+        patientId: patientIdRef.current,
+      };
+
+      if (imuRate && dwellTimes.current.length >= 8 && flightTimes.current.length >= 8 && imuBuffer.current.length >= 64) {
+        requestBody.dwellTimes = dwellTimes.current;
+        requestBody.flightTimes = flightTimes.current;
+        requestBody.imuAccelMagnitude = imuBuffer.current;
+        requestBody.kineticareSamplingRateHz = imuRate;
+      }
+
       const res = await fetch("/api/run-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          journalText,
-          baselineMap: 90,
-          useCamera: !!features,
-          simulateSpoof,
-          audioFeatures: features?.audioFeatures,
-          videoFeatures: features?.videoFeatures,
-          patientId: patientIdRef.current,
-          dwellTimes: dwellTimes.current,
-          flightTimes: flightTimes.current,
-          imuAccelMagnitude: imuBuffer.current,
-        }),
+        body: JSON.stringify(requestBody),
       });
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const data = await res.json() as AnalysisPayload;
@@ -297,6 +328,17 @@ export default function PillarDepressionPage() {
                      {depression.error_message}
                   </div>
                 )}
+
+                {result?.warnings?.length ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {result.warnings.map((warning) => (
+                      <div key={warning} className="disclaimer">
+                        <span className="disclaimer-icon">⚠</span>
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 {/* HuatuoGPT reasoning */}
                 <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>

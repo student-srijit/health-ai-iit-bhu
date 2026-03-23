@@ -6,14 +6,63 @@ interface VideoCapture {
   audioFeatures: number[];
   videoFeatures: number[];
   framesProcessed: number;
+  cameraMetrics: {
+    frame_quality_score: number;
+    blur_score: number;
+    face_tracking_confidence: number;
+    spoof_probability: number;
+    accepted_window_ratio: number;
+    laplacian_variance: number;
+    frequency_spoof_score: number;
+  };
+}
+
+type FaceDetectorLike = {
+  detect: (source: CanvasImageSource) => Promise<Array<{ boundingBox?: DOMRectReadOnly }>>;
+};
+
+declare global {
+  interface Window {
+    FaceDetector?: new (options?: { fastMode?: boolean; maxDetectedFaces?: number }) => FaceDetectorLike;
+  }
 }
 
 interface VideoCaptureProps {
   onCapture: (data: VideoCapture) => void;
-  duration?: number; // seconds
+  duration: number; // seconds
 }
 
-export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureProps) {
+function parseMediaResponse(payload: unknown): VideoCapture {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid response payload");
+  }
+
+  const candidate = payload as {
+    audio_features?: unknown;
+    video_features?: unknown;
+    frames_processed?: unknown;
+  };
+
+  if (!Array.isArray(candidate.audio_features) || !candidate.audio_features.every((n) => typeof n === "number")) {
+    throw new Error("Invalid audio feature vector");
+  }
+
+  if (!Array.isArray(candidate.video_features) || !candidate.video_features.every((n) => typeof n === "number")) {
+    throw new Error("Invalid video feature vector");
+  }
+
+  if (typeof candidate.frames_processed !== "number") {
+    throw new Error("Invalid frame count");
+  }
+
+  return {
+    audioFeatures: candidate.audio_features,
+    videoFeatures: candidate.video_features,
+    framesProcessed: candidate.frames_processed,
+  };
+}
+
+export default function VideoCapture({ onCapture, duration }: VideoCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const framesRef = useRef<string[]>([]);
@@ -21,11 +70,50 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const faceDetectorRef = useRef<FaceDetectorLike | null>(null);
+  const faceDetectionStateRef = useRef({
+    ready: false,
+    hasFace: true,
+    inFlight: false,
+  });
+  
+  // SQI State & Sensor Refs
+  const gravityRef = useRef<{x: number, y: number, z: number} | null>(null);
+  const [sqiStatus, setSqiStatus] = useState<string[]>([]);
 
   const [phase, setPhase] = useState<"idle" | "permission" | "recording" | "processing" | "done" | "error">("idle");
   const [timeLeft, setTimeLeft] = useState(duration);
   const [error, setError] = useState<string | null>(null);
   const [framesCollected, setFramesCollected] = useState(0);
+
+  const cameraStatsRef = useRef({
+    totalFrames: 0,
+    acceptedFrames: 0,
+    frameQualitySum: 0,
+    blurScoreSum: 0,
+    faceConfidenceSum: 0,
+    laplacianVarianceSum: 0,
+    faceChecks: 0,
+    faceMisses: 0,
+  });
+
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+
+  const buildCameraMetrics = useCallback(() => {
+    const stats = cameraStatsRef.current;
+    const total = Math.max(stats.totalFrames, 1);
+    const faceCheckCount = Math.max(stats.faceChecks, 1);
+    const faceMissRatio = stats.faceMisses / faceCheckCount;
+    return {
+      frame_quality_score: Number((stats.frameQualitySum / total).toFixed(4)),
+      blur_score: Number((stats.blurScoreSum / total).toFixed(4)),
+      face_tracking_confidence: Number((stats.faceConfidenceSum / total).toFixed(4)),
+      spoof_probability: Number((clamp01(faceMissRatio * 0.8) ).toFixed(4)),
+      accepted_window_ratio: Number((stats.acceptedFrames / total).toFixed(4)),
+      laplacian_variance: Number((stats.laplacianVarianceSum / total).toFixed(4)),
+      frequency_spoof_score: Number((clamp01(faceMissRatio)).toFixed(4)),
+    };
+  }, []);
 
   const stopAll = useCallback(() => {
     if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
@@ -47,6 +135,111 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
     const frameB64 = canvas.toDataURL("image/jpeg", 0.6).split(",")[1];
     framesRef.current.push(frameB64);
     setFramesCollected(framesRef.current.length);
+
+    // --- Dynamic Real-Time SQI Engine --- //
+    const width = 160;
+    const height = 90;
+    const imageData = ctx.getImageData(0, 0, width, height).data;
+    const gray = new Float32Array(width * height);
+    let brightness = 0;
+    for (let i = 0, p = 0; i < imageData.length; i += 4, p += 1) {
+      const y = (0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2]);
+      gray[p] = y;
+      brightness += y;
+    }
+    brightness = brightness / (width * height);
+    const brightnessNorm = brightness / 255;
+
+    let lapSum = 0;
+    let lapSqSum = 0;
+    let lapCount = 0;
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const idx = y * width + x;
+        const lap =
+          (4 * gray[idx]) -
+          gray[idx - 1] -
+          gray[idx + 1] -
+          gray[idx - width] -
+          gray[idx + width];
+        lapSum += lap;
+        lapSqSum += lap * lap;
+        lapCount += 1;
+      }
+    }
+
+    const lapMean = lapCount > 0 ? lapSum / lapCount : 0;
+    const lapVar = lapCount > 0 ? Math.max((lapSqSum / lapCount) - (lapMean * lapMean), 0) : 0;
+    const blurScore = clamp01((45 - lapVar) / 45);
+    const brightnessScore = clamp01(1 - (Math.abs(brightnessNorm - 0.55) / 0.55));
+    const textureScore = clamp01(lapVar / 120);
+    const detectorPenalty = faceDetectionStateRef.current.ready && !faceDetectionStateRef.current.hasFace ? 0.45 : 0;
+    const faceTrackingConfidence = clamp01(((0.6 * brightnessScore) + (0.4 * textureScore)) - detectorPenalty);
+    const frameQualityScore = clamp01(
+      (0.45 * brightnessScore) +
+      (0.35 * faceTrackingConfidence) +
+      (0.2 * (1 - blurScore)),
+    );
+
+    const frameAccepted =
+      brightnessNorm >= 0.18 &&
+      brightnessNorm <= 0.88 &&
+      lapVar >= 20 &&
+      faceTrackingConfidence >= 0.35 &&
+      !(faceDetectionStateRef.current.ready && !faceDetectionStateRef.current.hasFace);
+
+    cameraStatsRef.current.totalFrames += 1;
+    cameraStatsRef.current.frameQualitySum += frameQualityScore;
+    cameraStatsRef.current.blurScoreSum += blurScore;
+    cameraStatsRef.current.faceConfidenceSum += faceTrackingConfidence;
+    cameraStatsRef.current.laplacianVarianceSum += lapVar;
+    if (frameAccepted) {
+      cameraStatsRef.current.acceptedFrames += 1;
+    }
+
+    const detector = faceDetectorRef.current;
+    if (detector && !faceDetectionStateRef.current.inFlight && cameraStatsRef.current.totalFrames % 3 === 0) {
+      faceDetectionStateRef.current.inFlight = true;
+      void createImageBitmap(canvas)
+        .then(async (bitmap) => {
+          try {
+            const faces = await detector.detect(bitmap);
+            cameraStatsRef.current.faceChecks += 1;
+            const hasFace = faces.length > 0;
+            faceDetectionStateRef.current.ready = true;
+            faceDetectionStateRef.current.hasFace = hasFace;
+            if (!hasFace) {
+              cameraStatsRef.current.faceMisses += 1;
+            }
+          } finally {
+            bitmap.close();
+          }
+        })
+        .catch(() => {
+          faceDetectionStateRef.current.ready = false;
+          faceDetectionStateRef.current.hasFace = true;
+        })
+        .finally(() => {
+          faceDetectionStateRef.current.inFlight = false;
+        });
+    }
+    
+    const activeErrors: string[] = [];
+    if (brightnessNorm < 0.18) activeErrors.push("Low lighting detected. Keep your face fully visible.");
+    if (brightnessNorm > 0.88) activeErrors.push("Overexposure detected. Reduce direct light.");
+    if (lapVar < 20) activeErrors.push("Face blur or occlusion detected. Hold steady and uncover face.");
+    if (faceDetectionStateRef.current.ready && !faceDetectionStateRef.current.hasFace) {
+      activeErrors.push("Face not detected clearly. Uncover and center your face.");
+    }
+    
+    if (gravityRef.current) {
+      const { y, z } = gravityRef.current;
+      if (Math.abs(y) < 5 && Math.abs(z) > 4) {
+        activeErrors.push("Lying down / Bad posture detected.");
+      }
+    }
+    setSqiStatus(activeErrors);
+
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -54,12 +247,29 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
     setPhase("permission");
     framesRef.current = [];
     audioChunksRef.current = [];
+    cameraStatsRef.current = {
+      totalFrames: 0,
+      acceptedFrames: 0,
+      frameQualitySum: 0,
+      blurScoreSum: 0,
+      faceConfidenceSum: 0,
+      laplacianVarianceSum: 0,
+      faceChecks: 0,
+      faceMisses: 0,
+    };
+    faceDetectionStateRef.current = {
+      ready: false,
+      hasFace: true,
+      inFlight: false,
+    };
     setFramesCollected(0);
     setTimeLeft(duration);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
+      const audioTrack = stream.getAudioTracks()[0];
+      const sampleRate = audioTrack?.getSettings().sampleRate;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -103,37 +313,54 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 audioBase64,
-                videoFrames: framesRef.current.slice(0, 60),
-                sampleRate: 44100,
+                videoFrames: framesRef.current.slice(0, Math.ceil((duration * 1000) / 200)),
+                ...(typeof sampleRate === "number" ? { sampleRate } : {}),
               }),
             });
 
             if (!res.ok) throw new Error(`Server error ${res.status}`);
-            const data = await res.json() as {
-              audio_features: number[];
-              video_features: number[];
-              frames_processed: number;
-            };
-
+            const data = await res.json();
             onCapture({
-              audioFeatures: data.audio_features ?? [],
-              videoFeatures: data.video_features ?? [],
-              framesProcessed: data.frames_processed ?? 0,
+              ...parseMediaResponse(data),
+              cameraMetrics: buildCameraMetrics(),
             });
             setPhase("done");
           } catch (err) {
-            setError(err instanceof Error ? err.message : "Processing failed");
+            setError(err instanceof Error ? err.message : String(err));
             setPhase("error");
           }
         }
       }, 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Camera access denied");
+      setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [captureFrame, duration, onCapture, stopAll]);
+  }, [buildCameraMetrics, captureFrame, duration, onCapture, stopAll]);
 
-  useEffect(() => () => stopAll(), [stopAll]);
+  useEffect(() => {
+    if (window.FaceDetector) {
+      try {
+        faceDetectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+      } catch {
+        faceDetectorRef.current = null;
+      }
+    }
+
+    const handleMotion = (e: DeviceMotionEvent) => {
+      if (e.accelerationIncludingGravity) {
+        gravityRef.current = {
+          x: e.accelerationIncludingGravity.x || 0,
+          y: e.accelerationIncludingGravity.y || 0,
+          z: e.accelerationIncludingGravity.z || 0,
+        };
+      }
+    };
+    window.addEventListener('devicemotion', handleMotion);
+    return () => {
+      stopAll();
+      window.removeEventListener('devicemotion', handleMotion);
+    };
+  }, [stopAll]);
 
   const progressPct = ((duration - timeLeft) / duration) * 100;
   const isRecording = phase === "recording";
@@ -174,6 +401,17 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff", display: "inline-block" }}
               className="pulse-red" />
             {timeLeft}s
+          </div>
+        )}
+
+        {/* Real-time SQI Warning Overlay */}
+        {isRecording && sqiStatus.length > 0 && (
+          <div style={{ position: "absolute", top: 44, left: 12, right: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            {sqiStatus.map(sqi => (
+              <div key={sqi} className="animate-pulse" style={{ background: "rgba(239,68,68,0.95)", color: "white", padding: "8px 12px", borderRadius: 8, fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, zIndex: 10 }}>
+                <span>⚠️</span> SQI Alert: {sqi}
+              </div>
+            ))}
           </div>
         )}
 
@@ -240,7 +478,7 @@ export default function VideoCapture({ onCapture, duration = 30 }: VideoCaptureP
 
       {error && (
         <div className="disclaimer" style={{ marginTop: 12, background: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)", color: "#fca5a5" }}>
-          ⚠ {error}. You can still run analysis — simulated features will be used.
+          ⚠ {error}
         </div>
       )}
 

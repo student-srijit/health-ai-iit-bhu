@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getServiceUrl } from "../../../lib/env";
 import { fetchJson } from "../../../lib/http";
 import { runCheckSchema } from "../../../lib/validation";
+import { saveAssessment } from "../../../lib/clinical-store";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -11,11 +12,9 @@ async function postJson(url: string, payload: JsonRecord) {
     method: "POST",
     payload,
     timeoutMs: 15000,
-    retries: 0,
+    retries: 1,
   });
 }
-
-const max = (a: number, b: number) => a > b ? a : b;
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,96 +29,133 @@ export async function POST(req: NextRequest) {
 
     const body = parsed.data;
     const useCamera = Boolean(body.useCamera);
-    const simulateSpoof = Boolean(body.simulateSpoof);
     const patientId = body.patientId ?? randomUUID();
+    const dwellTimes = body.dwellTimesMs ?? body.dwellTimes;
+    const flightTimes = body.flightTimesMs ?? body.flightTimes;
+    const hasCameraFeatureVectors = Boolean(body.audioFeatures && body.videoFeatures);
+    const hasCameraMetrics = Boolean(body.cameraMetrics);
+    const canUseCameraPayload = useCamera && hasCameraFeatureVectors && hasCameraMetrics;
 
-    // Use real features from VideoCapture if provided, otherwise fall back to simulated
-    const audioFeatures =
-      body.audioFeatures && body.audioFeatures.length >= 32
-        ? body.audioFeatures
-        : new Array(128).fill(0.2);
-    const videoFeatures =
-      body.videoFeatures && body.videoFeatures.length >= 32
-        ? body.videoFeatures
-        : new Array(128).fill(0.15);
+    const warnings: string[] = [];
+    if (useCamera && !canUseCameraPayload) {
+      warnings.push("Camera capture was incomplete, so analysis continued with available modalities.");
+    }
+
+    const hasAnyKineticareField = Boolean(dwellTimes || flightTimes || body.imuAccelMagnitude || body.kineticareSamplingRateHz);
+    const hasKineticareInputs = Boolean(
+      dwellTimes &&
+      flightTimes &&
+      body.imuAccelMagnitude &&
+      body.kineticareSamplingRateHz,
+    );
+
+    if (hasAnyKineticareField && !hasKineticareInputs) {
+      return NextResponse.json(
+        { error: "Incomplete KinetiCare payload. Provide dwellTimes/flightTimes/imuAccelMagnitude/kineticareSamplingRateHz." },
+        { status: 400 },
+      );
+    }
+
+    const hasAnyPpgField = Boolean(body.ppgSignal || body.ppgSamplingRateHz);
+    const hasPpgInputs = Boolean(body.ppgSignal && body.ppgSamplingRateHz);
+
+    if (hasAnyPpgField && !hasPpgInputs) {
+      return NextResponse.json(
+        { error: "Incomplete PPG payload. Provide ppgSignal and ppgSamplingRateHz." },
+        { status: 400 },
+      );
+    }
 
     const depressionPayload: JsonRecord = {
       patient_id: patientId,
       journal_text: body.journalText,
-      audio_features: audioFeatures,
-      video_features: videoFeatures,
+      audio_features: canUseCameraPayload ? (body.audioFeatures ?? []) : [],
+      video_features: canUseCameraPayload ? (body.videoFeatures ?? []) : [],
     };
 
-    if (useCamera) {
-      depressionPayload.camera_metrics = {
-        frame_quality_score: simulateSpoof ? 0.4 : 0.95,
-        blur_score: simulateSpoof ? 0.75 : 0.1,
-        face_tracking_confidence: simulateSpoof ? 0.4 : 0.93,
-        spoof_probability: simulateSpoof ? 0.92 : 0.05,
-        accepted_window_ratio: simulateSpoof ? 0.38 : 0.94,
-        laplacian_variance: simulateSpoof ? 5.0 : 45.0,
-        frequency_spoof_score: simulateSpoof ? 0.92 : 0.1,
+    if (canUseCameraPayload && body.cameraMetrics) {
+      const cameraMetrics: JsonRecord = {
+        ...(body.cameraMetrics as JsonRecord),
       };
+
+      if (body.simulateSpoof) {
+        cameraMetrics.spoof_probability = 0.95;
+        cameraMetrics.frequency_spoof_score = 0.9;
+        warnings.push("Anti-spoof simulation is enabled, so camera metrics were intentionally flagged.");
+      }
+
+      depressionPayload.camera_metrics = cameraMetrics;
     }
 
-    const ppgPayload: JsonRecord = {
-      patient_id: patientId,
-      ppg_signal: [0.1, 0.12, 0.08, 0.11, 0.15, 0.09, 0.13, 0.1].flatMap((x) =>
-        new Array(70).fill(x),
-      ),
-      sampling_rate_hz: 100,
-      baseline_map: body.baselineMap,
-    };
+    const depression = await postJson(getServiceUrl("depression", "/predict"), depressionPayload);
 
-    const clientDwell = Array.isArray(body.dwellTimes) && body.dwellTimes.length > 0 ? body.dwellTimes : [110, 115, 120, 95, 140, 130];
-    const clientFlight = Array.isArray(body.flightTimes) && body.flightTimes.length > 0 ? body.flightTimes : [90, 85, 95, 88, 100, 92];
-    const clientImu = Array.isArray(body.imuAccelMagnitude) && body.imuAccelMagnitude.length > 0 ? body.imuAccelMagnitude : [0.02, 0.01, 0.03, 0.02];
+    const ppg = hasPpgInputs
+      ? await postJson(getServiceUrl("ppg", "/predict"), {
+          patient_id: patientId,
+          ppg_signal: body.ppgSignal,
+          sampling_rate_hz: body.ppgSamplingRateHz,
+          baseline_map: body.baselineMap,
+        })
+      : null;
 
-    const kineticarePayload: JsonRecord = {
-      patient_id: patientId,
-      dwell_times_ms: [...clientDwell, ...new Array(max(0, 16 - clientDwell.length)).fill(115)],
-      flight_times_ms: [...clientFlight, ...new Array(max(0, 16 - clientFlight.length)).fill(90)],
-      imu_accel_magnitude: [...clientImu, ...new Array(max(0, 128 - clientImu.length)).fill(0.02)],
-      sampling_rate_hz: 50,
-    };
+    const kineticare = hasKineticareInputs
+      ? await postJson(getServiceUrl("kineticare", "/predict"), {
+          patient_id: patientId,
+          dwell_times_ms: dwellTimes,
+          flight_times_ms: flightTimes,
+          imu_accel_magnitude: body.imuAccelMagnitude,
+          sampling_rate_hz: body.kineticareSamplingRateHz,
+        })
+      : null;
 
-    const [depression, ppg, kineticare] = await Promise.all([
-      postJson(getServiceUrl("depression", "/predict"), depressionPayload),
-      postJson(getServiceUrl("ppg", "/predict"), ppgPayload),
-      postJson(getServiceUrl("kineticare", "/predict"), kineticarePayload),
-    ]);
+    const canSummarize = Boolean(ppg && kineticare);
 
-    const orchestratorPayload: JsonRecord = {
-      patient_id: patientId,
-      depression: {
-        depression_score: depression.depression_score,
-        risk_band: depression.risk_band,
+    const orchestrator = canSummarize
+      ? await postJson(getServiceUrl("orchestrator", "/summarize"), {
+          patient_id: patientId,
+          depression: {
+            depression_score: depression.depression_score,
+            risk_band: depression.risk_band,
+          },
+          ppg: {
+            map: ppg?.map,
+            change_map: ppg?.change_map,
+            ratio_map: ppg?.ratio_map,
+            risk_band: ppg?.risk_band,
+          },
+          kineticare: {
+            risk_band: kineticare?.risk_band,
+            session_quality: kineticare?.session_quality,
+            signals_used: kineticare?.signals_used,
+          },
+          ...(typeof depression.camera_sqi === "number" && typeof depression.spoof_detected === "boolean"
+            ? {
+                camera_quality: {
+                  status: depression.status,
+                  camera_sqi: depression.camera_sqi,
+                  spoof_detected: depression.spoof_detected,
+                },
+              }
+            : {}),
+        })
+      : await postJson(getServiceUrl("orchestrator", "/huatuo-reason"), {
+          prompt: `Patient ${patientId} assessment with partial modalities. Depression risk band: ${String(depression.risk_band)}. Journal summary: ${body.journalText}`,
+        });
+
+    const nowIso = new Date().toISOString();
+    await saveAssessment({
+      patientId,
+      source: "run-check",
+      createdAt: nowIso,
+      depression,
+      ppg: ppg ?? undefined,
+      kineticare: kineticare ?? undefined,
+      orchestrator,
+      metadata: {
+        useCamera,
+        simulateSpoof: body.simulateSpoof,
       },
-      ppg: {
-        map: ppg.map,
-        change_map: ppg.change_map,
-        ratio_map: ppg.ratio_map,
-        sbp: (ppg.sbp ?? 120) as number,
-        dbp: (ppg.dbp ?? 80) as number,
-        hr_bpm: (ppg.hr_bpm ?? 72) as number,
-        risk_band: ppg.risk_band,
-      },
-      kineticare: {
-        risk_band: kineticare.risk_band,
-        session_quality: kineticare.session_quality,
-        signals_used: kineticare.signals_used,
-      },
-      camera_quality: {
-        status: depression.status,
-        camera_sqi: (depression.camera_sqi ?? 1.0) as number,
-        spoof_detected: (depression.spoof_detected ?? false) as boolean,
-      },
-    };
-
-    const orchestrator = await postJson(
-      getServiceUrl("orchestrator", "/summarize"),
-      orchestratorPayload,
-    );
+    });
 
     return NextResponse.json({
       patient_id: patientId,
@@ -127,6 +163,7 @@ export async function POST(req: NextRequest) {
       ppg,
       kineticare,
       orchestrator,
+      warnings,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown workflow error";
