@@ -77,12 +77,27 @@ class KinetiCareInput(BaseModel):
     signals_used: list[str] = ["keystroke", "imu"]
 
 
+class BloodInput(BaseModel):
+    hemoglobin_g_dl: float
+    risk_band: str
+    confidence: float = 0.0
+
+
+class NervousInput(BaseModel):
+    risk_band: str
+    tremor_hz: float = 0.0
+    tap_rate_hz: float = 0.0
+    session_quality: str = "warning"
+
+
 class SummaryRequest(BaseModel):
     patient_id: str
     depression: DepressionInput
     ppg: PpgInput
     kineticare: KinetiCareInput
     camera_quality: CameraQualityInput | None = None
+    blood: BloodInput | None = None
+    nervous: NervousInput | None = None
 
 
 class SummaryResponse(BaseModel):
@@ -158,11 +173,16 @@ def huatuo_reason(payload: HuatuoRequest) -> HuatuoResponse:
 @app.post("/summarize", response_model=SummaryResponse)
 def summarize(payload: SummaryRequest) -> SummaryResponse:
     risk_levels = {"low": 1, "medium": 2, "high": 3}
-    max_risk = max(
+    risk_values = [
         risk_levels.get(payload.depression.risk_band, 1),
         risk_levels.get(payload.ppg.risk_band, 1),
         risk_levels.get(payload.kineticare.risk_band, 1),
-    )
+    ]
+    if payload.blood is not None:
+        risk_values.append(risk_levels.get(payload.blood.risk_band, 1))
+    if payload.nervous is not None:
+        risk_values.append(risk_levels.get(payload.nervous.risk_band, 1))
+    max_risk = max(risk_values)
     overall_risk = {1: "low", 2: "medium", 3: "high"}[max_risk]
 
     camera_used = payload.camera_quality is not None and payload.camera_quality.status != "not_provided"
@@ -173,15 +193,44 @@ def summarize(payload: SummaryRequest) -> SummaryResponse:
         quality_caveat = "Camera feed blocked by anti-spoofing or low SQI; summary prioritised KinetiCare and PPG."
     elif payload.kineticare.session_quality == "poor":
         quality_caveat = "KinetiCare session quality is poor; collect a longer typing session for stronger confidence."
+    elif payload.nervous is not None and payload.nervous.session_quality == "poor":
+        quality_caveat = "Nervous-system tapping session quality is poor; collect a longer hand-tracking capture."
 
-    summary = (
+    summary_parts = [
         f"Depression risk is {payload.depression.risk_band} "
         f"(score {payload.depression.depression_score:.2f}). "
         f"Cardiovascular trend risk is {payload.ppg.risk_band} "
         f"(MAP {payload.ppg.map:.1f} mmHg). "
         f"KinetiCare neurological risk is {payload.kineticare.risk_band}. "
-        f"Overall integrated risk: {overall_risk.upper()}."
-    )
+    ]
+    if payload.blood is not None:
+        summary_parts.append(
+            f"Blood hemoglobin estimate is {payload.blood.hemoglobin_g_dl:.2f} g/dL "
+            f"({payload.blood.risk_band} risk). "
+        )
+    if payload.nervous is not None:
+        summary_parts.append(
+            f"Finger-tapping nervous-system risk is {payload.nervous.risk_band} "
+            f"(tremor {payload.nervous.tremor_hz:.2f} Hz). "
+        )
+    summary_parts.append(f"Overall integrated risk: {overall_risk.upper()}.")
+    summary = "".join(summary_parts)
+
+    blood_line = ""
+    if payload.blood is not None:
+        blood_line = (
+            f"Hemoglobin estimate: {payload.blood.hemoglobin_g_dl:.2f} g/dL "
+            f"({payload.blood.risk_band} risk, confidence {payload.blood.confidence:.2f})\n"
+        )
+
+    nervous_line = ""
+    if payload.nervous is not None:
+        nervous_line = (
+            f"Finger-tapping nervous risk: {payload.nervous.risk_band}, "
+            f"tremor peak: {payload.nervous.tremor_hz:.2f} Hz, "
+            f"tap rate: {payload.nervous.tap_rate_hz:.2f} Hz, "
+            f"session quality: {payload.nervous.session_quality}\n"
+        )
 
     huatuo_prompt = (
         "You are HuatuoGPT-o1, a specialized medical reasoning assistant. "
@@ -193,6 +242,8 @@ def summarize(payload: SummaryRequest) -> SummaryResponse:
         f"MAP ratio: {payload.ppg.ratio_map:.3f} ({payload.ppg.risk_band} risk)\n"
         f"KinetiCare neuromotor risk: {payload.kineticare.risk_band} "
         f"(session quality: {payload.kineticare.session_quality})\n"
+        f"{blood_line}"
+        f"{nervous_line}"
         f"Camera biometrics used: {camera_used}, blocked: {camera_blocked}\n"
         f"Overall integrated risk: {overall_risk}\n\n"
         "Provide: (1) clinical interpretation, (2) likely psychosomatic connections, "
@@ -248,6 +299,8 @@ def summarize(payload: SummaryRequest) -> SummaryResponse:
             "camera_used": camera_used,
             "kineticare_used": True,
             "ppg_used": True,
+            "blood_used": payload.blood is not None,
+            "nervous_used": payload.nervous is not None,
         },
         next_actions=actions,
     )

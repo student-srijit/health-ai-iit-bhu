@@ -49,8 +49,11 @@ function isPortFree(port) {
   });
 }
 
-async function findFreePort(preferredPort) {
+async function findFreePort(preferredPort, reservedPorts = new Set()) {
   for (let candidate = preferredPort; candidate <= 65535; candidate += 1) {
+    if (reservedPorts.has(candidate)) {
+      continue;
+    }
     // Sequential probing guarantees no silent fallback to a hardcoded alternate port.
     // It picks the first actually available port from the requested starting point.
     // This keeps behavior deterministic while handling stale listeners cleanly.
@@ -68,14 +71,20 @@ const preferredPorts = {
   ppg: parsePort(process.env.PPG_PORT, 8002),
   orchestrator: parsePort(process.env.ORCHESTRATOR_PORT, 8003),
   kineticare: parsePort(process.env.KINETICARE_PORT, 8004),
+  blood: parsePort(process.env.BLOOD_PORT, 8005),
+  nervous: parsePort(process.env.NERVOUS_PORT, 8006),
 };
 
-const servicePorts = {
-  depression: await findFreePort(preferredPorts.depression),
-  ppg: await findFreePort(preferredPorts.ppg),
-  orchestrator: await findFreePort(preferredPorts.orchestrator),
-  kineticare: await findFreePort(preferredPorts.kineticare),
-};
+const reservedPorts = new Set();
+const servicePorts = {};
+
+for (const [serviceName, preferredPort] of Object.entries(preferredPorts)) {
+  // Reserve each selected port so no two services bind the same address.
+  // eslint-disable-next-line no-await-in-loop
+  const selected = await findFreePort(preferredPort, reservedPorts);
+  reservedPorts.add(selected);
+  servicePorts[serviceName] = selected;
+}
 
 const webEnv = {
   ...process.env,
@@ -83,10 +92,12 @@ const webEnv = {
   PPG_SERVICE_URL: `http://127.0.0.1:${servicePorts.ppg}`,
   ORCHESTRATOR_SERVICE_URL: `http://127.0.0.1:${servicePorts.orchestrator}`,
   KINETICARE_SERVICE_URL: `http://127.0.0.1:${servicePorts.kineticare}`,
+  BLOOD_SERVICE_URL: `http://127.0.0.1:${servicePorts.blood}`,
+  NERVOUS_SERVICE_URL: `http://127.0.0.1:${servicePorts.nervous}`,
 };
 
 console.log(
-  `[dev-all] Using ports depression=${servicePorts.depression}, ppg=${servicePorts.ppg}, orchestrator=${servicePorts.orchestrator}, kineticare=${servicePorts.kineticare}`,
+  `[dev-all] Using ports depression=${servicePorts.depression}, ppg=${servicePorts.ppg}, orchestrator=${servicePorts.orchestrator}, kineticare=${servicePorts.kineticare}, blood=${servicePorts.blood}, nervous=${servicePorts.nervous}`,
 );
 
 const services = [
@@ -154,6 +165,36 @@ const services = [
       "0.0.0.0",
       "--port",
       String(servicePorts.kineticare),
+    ],
+  },
+  {
+    name: "blood",
+    command: pythonExe,
+    args: [
+      "-m",
+      "uvicorn",
+      "blood_service.main:app",
+      "--app-dir",
+      "services/blood-service/src",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(servicePorts.blood),
+    ],
+  },
+  {
+    name: "nervous",
+    command: pythonExe,
+    args: [
+      "-m",
+      "uvicorn",
+      "nervous_service.main:app",
+      "--app-dir",
+      "services/nervous-service/src",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(servicePorts.nervous),
     ],
   },
 ];

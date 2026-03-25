@@ -17,11 +17,13 @@
     "quality_caveat": { "type": ["string", "null"] },
     "modality_flags": {
       "type": "object",
-      "required": ["camera_used", "kineticare_used", "ppg_used"],
+      "required": ["camera_used", "kineticare_used", "ppg_used", "blood_used", "nervous_used"],
       "properties": {
         "camera_used": { "type": "boolean" },
         "kineticare_used": { "type": "boolean" },
-        "ppg_used": { "type": "boolean" }
+        "ppg_used": { "type": "boolean" },
+        "blood_used": { "type": "boolean" },
+        "nervous_used": { "type": "boolean" }
       },
       "additionalProperties": false
     },

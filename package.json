@@ -11,6 +11,8 @@
     "dev:ppg": "python -m uvicorn ppg_service.main:app --app-dir services/ppg-service/src --host 0.0.0.0 --port 8002",
     "dev:orchestrator": "python -m uvicorn orchestrator_service.main:app --app-dir services/orchestrator-service/src --host 0.0.0.0 --port 8003",
     "dev:kineticare": "python -m uvicorn kineticare_service.main:app --app-dir services/kineticare-service/src --host 0.0.0.0 --port 8004",
+    "dev:blood": "python -m uvicorn blood_service.main:app --app-dir services/blood-service/src --host 0.0.0.0 --port 8005",
+    "dev:nervous": "python -m uvicorn nervous_service.main:app --app-dir services/nervous-service/src --host 0.0.0.0 --port 8006",
     "setup:backend": "python -m pip install -r requirements-backend.txt",
     "setup:web": "npm --prefix apps/web install",
     "setup:all": "npm run setup:backend && npm run setup:web && npm run prepare:models"

@@ -53,6 +53,30 @@
         }
       },
       "additionalProperties": true
+    },
+    "blood": {
+      "type": "object",
+      "required": ["hemoglobin_g_dl", "risk_band"],
+      "properties": {
+        "hemoglobin_g_dl": { "type": "number", "minimum": 0, "maximum": 25 },
+        "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "nervous": {
+      "type": "object",
+      "required": ["risk_band"],
+      "properties": {
+        "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+        "tremor_hz": { "type": "number", "minimum": 0 },
+        "tap_rate_hz": { "type": "number", "minimum": 0 },
+        "session_quality": {
+          "type": "string",
+          "enum": ["good", "warning", "poor"]
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": false

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NervousSystemPredictRequest",
+  "type": "object",
+  "required": [
+    "patient_id",
+    "tap_intervals_ms",
+    "tap_distances_px",
+    "tremor_signal",
+    "sampling_rate_hz"
+  ],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "tap_intervals_ms": { "type": "array", "items": { "type": "number" }, "minItems": 10 },
+    "tap_distances_px": { "type": "array", "items": { "type": "number" }, "minItems": 10 },
+    "tremor_signal": { "type": "array", "items": { "type": "number" }, "minItems": 64 },
+    "sampling_rate_hz": { "type": "number", "exclusiveMinimum": 0 }
+  },
+  "additionalProperties": false
+}

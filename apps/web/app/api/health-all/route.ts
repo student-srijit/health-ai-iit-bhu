@@ -8,6 +8,8 @@ const SERVICES: Record<string, string> = {
   ppg: getServiceUrl("ppg", "/health"),
   orchestrator: getServiceUrl("orchestrator", "/health"),
   kineticare: getServiceUrl("kineticare", "/health"),
+  blood: getServiceUrl("blood", "/health"),
+  nervous: getServiceUrl("nervous", "/health"),
 };
 
 async function check(url: string): Promise<{ ok: boolean; message: string }> {

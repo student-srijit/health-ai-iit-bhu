@@ -35,6 +35,21 @@ export async function POST(req: NextRequest) {
     const hasCameraFeatureVectors = Boolean(body.audioFeatures && body.videoFeatures);
     const hasCameraMetrics = Boolean(body.cameraMetrics);
     const canUseCameraPayload = useCamera && hasCameraFeatureVectors && hasCameraMetrics;
+    const hasAnyBloodField = Boolean(body.bloodImageBase64);
+    const hasBloodInputs = Boolean(body.bloodImageBase64);
+
+    const hasAnyNervousField = Boolean(
+      body.nervousTapIntervalsMs ||
+      body.nervousTapDistancesPx ||
+      body.nervousTremorSignal ||
+      body.nervousSamplingRateHz,
+    );
+    const hasNervousInputs = Boolean(
+      body.nervousTapIntervalsMs &&
+      body.nervousTapDistancesPx &&
+      body.nervousTremorSignal &&
+      body.nervousSamplingRateHz,
+    );
 
     const warnings: string[] = [];
     if (useCamera && !canUseCameraPayload) {
@@ -52,6 +67,20 @@ export async function POST(req: NextRequest) {
     if (hasAnyKineticareField && !hasKineticareInputs) {
       return NextResponse.json(
         { error: "Incomplete KinetiCare payload. Provide dwellTimes/flightTimes/imuAccelMagnitude/kineticareSamplingRateHz." },
+        { status: 400 },
+      );
+    }
+
+    if (hasAnyNervousField && !hasNervousInputs) {
+      return NextResponse.json(
+        { error: "Incomplete Nervous payload. Provide nervousTapIntervalsMs/nervousTapDistancesPx/nervousTremorSignal/nervousSamplingRateHz." },
+        { status: 400 },
+      );
+    }
+
+    if (hasAnyBloodField && !hasBloodInputs) {
+      return NextResponse.json(
+        { error: "Incomplete Blood payload. Provide bloodImageBase64." },
         { status: 400 },
       );
     }
@@ -108,10 +137,41 @@ export async function POST(req: NextRequest) {
         })
       : null;
 
+    let nervous: JsonRecord | null = null;
+    if (hasNervousInputs) {
+      try {
+        nervous = await postJson(getServiceUrl("nervous", "/predict"), {
+          patient_id: patientId,
+          tap_intervals_ms: body.nervousTapIntervalsMs,
+          tap_distances_px: body.nervousTapDistancesPx,
+          tremor_signal: body.nervousTremorSignal,
+          sampling_rate_hz: body.nervousSamplingRateHz,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Nervous predict failed";
+        warnings.push(`Nervous service error: ${msg}`);
+      }
+    }
+
+    let blood: JsonRecord | null = null;
+    if (hasBloodInputs) {
+      try {
+        blood = await postJson(getServiceUrl("blood", "/predict"), {
+          patient_id: patientId,
+          image_base64: body.bloodImageBase64,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Blood predict failed";
+        warnings.push(`Blood service error: ${msg}`);
+      }
+    }
+
     const canSummarize = Boolean(ppg && kineticare);
 
-    const orchestrator = canSummarize
-      ? await postJson(getServiceUrl("orchestrator", "/summarize"), {
+    let orchestrator: JsonRecord | null = null;
+    try {
+      if (canSummarize) {
+        orchestrator = await postJson(getServiceUrl("orchestrator", "/summarize"), {
           patient_id: patientId,
           depression: {
             depression_score: depression.depression_score,
@@ -128,6 +188,25 @@ export async function POST(req: NextRequest) {
             session_quality: kineticare?.session_quality,
             signals_used: kineticare?.signals_used,
           },
+          ...(nervous
+            ? {
+                nervous: {
+                  risk_band: nervous.risk_band,
+                  tremor_hz: nervous.tremor_hz,
+                  tap_rate_hz: nervous.tap_rate_hz,
+                  session_quality: nervous.session_quality,
+                },
+              }
+            : {}),
+          ...(blood
+            ? {
+                blood: {
+                  hemoglobin_g_dl: blood.hemoglobin_g_dl,
+                  risk_band: blood.risk_band,
+                  confidence: blood.confidence,
+                },
+              }
+            : {}),
           ...(typeof depression.camera_sqi === "number" && typeof depression.spoof_detected === "boolean"
             ? {
                 camera_quality: {
@@ -137,10 +216,21 @@ export async function POST(req: NextRequest) {
                 },
               }
             : {}),
-        })
-      : await postJson(getServiceUrl("orchestrator", "/huatuo-reason"), {
+        });
+      } else {
+        orchestrator = await postJson(getServiceUrl("orchestrator", "/huatuo-reason"), {
           prompt: `Patient ${patientId} assessment with partial modalities. Depression risk band: ${String(depression.risk_band)}. Journal summary: ${body.journalText}`,
         });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown orchestrator error";
+      console.error(`[run-check] Orchestrator failed: ${msg}`);
+      warnings.push(`Orchestrator service error: ${msg}`);
+      orchestrator = {
+        overall_risk: "unknown",
+        summary: "Orchestrator synthesis unavailable due to service error. Review individual modality results.",
+      };
+    }
 
     const nowIso = new Date().toISOString();
     await saveAssessment({
@@ -150,6 +240,8 @@ export async function POST(req: NextRequest) {
       depression,
       ppg: ppg ?? undefined,
       kineticare: kineticare ?? undefined,
+      blood: blood ?? undefined,
+      nervous: nervous ?? undefined,
       orchestrator,
       metadata: {
         useCamera,
@@ -162,11 +254,16 @@ export async function POST(req: NextRequest) {
       depression,
       ppg,
       kineticare,
+      blood,
+      nervous,
       orchestrator,
       warnings,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown workflow error";
+    const stack = error instanceof Error ? error.stack : "";
+    console.error(`[run-check] Request failed: ${message}`);
+    if (stack) console.error(`[run-check] Stack: ${stack}`);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

@@ -14,6 +14,8 @@ type WorkflowResponse = {
     risk_band?: string;
     confidence?: number;
     depression_score?: number;
+    modalities_used?: string[];
+    status?: string;
     error_message?: string | null;
   };
   ppg?: {
@@ -27,6 +29,21 @@ type WorkflowResponse = {
     risk_band?: string;
     session_quality?: string;
     confidence?: number;
+  };
+  blood?: {
+    hemoglobin_g_dl?: number;
+    risk_band?: string;
+    confidence?: number;
+    roi_quality?: number;
+    warnings?: string[];
+  };
+  nervous?: {
+    risk_band?: string;
+    session_quality?: string;
+    confidence?: number;
+    tap_rate_hz?: number;
+    tremor_hz?: number;
+    amplitude_dropoff?: number;
   };
   orchestrator?: {
     overall_risk?: string;
@@ -44,47 +61,71 @@ const PILLARS = [
     href: "/pillar-depression",
     icon: "🧠",
     title: "Digital Phenotype",
-    subtitle: "Psychiatric Neuromarkers",
-    description: "Multi-modal sentiment, facial micro-expressions, and vocal tremor analysis processed directly via clinical LSTM nets.",
-    accent: "#0d9488", // Teal
-    tagBg: "#ccfbf1",
-    tagColor: "#0f766e",
-    tagBorder: "#99f6e4",
-    tag: "Modality I",
+    subtitle: "Mental Health",
+    description: "30-second journal recording analyzed via audio tremors, facial micro-expressions, and NLP sentiment. LSTM + highway layer fusion.",
+    accent: "#14b8a6",
+    tagBg: "rgba(20,184,166,0.12)",
+    tagColor: "#14b8a6",
+    tagBorder: "rgba(20,184,166,0.2)",
+    tag: "Pillar 1",
   },
   {
     href: "/pillar-ppg",
     icon: "💓",
-    title: "Optical Vitals",
-    subtitle: "Cardiovascular Telemetry",
-    description: "Contactless Photoplethysmography (PPG) estimating exact Mean Arterial Pressure changes via hybrid CNN-GRU models.",
-    accent: "#0284c7", // Blue
-    tagBg: "#e0f2fe",
-    tagColor: "#0369a1",
-    tagBorder: "#bae6fd",
-    tag: "Modality II",
+    title: "Non-Invasive PPG",
+    subtitle: "Cardiovascular",
+    description: "Photoplethysmography from your phone camera. No cuff needed. Estimates MAP changes and cardiovascular risk via hybrid CNN-GRU.",
+    accent: "#f472b6",
+    tagBg: "rgba(244,114,182,0.12)",
+    tagColor: "#f472b6",
+    tagBorder: "rgba(244,114,182,0.2)",
+    tag: "Pillar 2",
   },
   {
-    href: "/pillar-kineticare",
-    icon: "⚡",
-    title: "KinetiCare",
-    subtitle: "Neuromotor Diagnostics",
-    description: "Invisible background telemetry analyzing fine-motor impairment indicators through device interactions and IMU sensing.",
-    accent: "#7c3aed", // Purple
-    tagBg: "#ede9fe",
-    tagColor: "#6d28d9",
-    tagBorder: "#ddd6fe",
-    tag: "Modality III",
+    href: "/pillar-blood",
+    icon: "🩸",
+    title: "Conjunctiva Hb",
+    subtitle: "Blood Health",
+    description: "Inner-eyelid image analysis estimates hemoglobin and anemia-risk band with ROI quality confidence checks.",
+    accent: "#ef4444",
+    tagBg: "rgba(239,68,68,0.12)",
+    tagColor: "#ef4444",
+    tagBorder: "rgba(239,68,68,0.2)",
+    tag: "Pillar 3",
+  },
+  {
+    href: "/pillar-nervous",
+    icon: "🖐",
+    title: "Neuromotor Signals",
+    subtitle: "Nervous System",
+    description: "Tap cadence and tremor-derived dynamics estimate nervous-system risk with session-quality scoring.",
+    accent: "#0ea5e9",
+    tagBg: "rgba(14,165,233,0.12)",
+    tagColor: "#0ea5e9",
+    tagBorder: "rgba(14,165,233,0.2)",
+    tag: "Pillar 4",
+  },
+  {
+    href: "/pillar-orchestrator",
+    icon: "🤖",
+    title: "HuatuoGPT-o1",
+    subtitle: "Medical Brain",
+    description: "Specialized medical LLM with self-verification. Fuses all pillar outputs and provides cross-referenced clinical reasoning.",
+    accent: "#a78bfa",
+    tagBg: "rgba(167,139,250,0.12)",
+    tagColor: "#a78bfa",
+    tagBorder: "rgba(167,139,250,0.2)",
+    tag: "Pillar 5",
   },
 ];
 
-const SERVICE_KEYS = ["web", "depression", "ppg", "orchestrator", "kineticare"] as const;
+const SERVICE_KEYS = ["web", "depression", "ppg", "kineticare", "blood", "nervous", "orchestrator"] as const;
 
 export default function Page() {
-  const [patientId, setPatientId] = useState("PT-" + Math.floor(Math.random() * 90000 + 10000));
-  const [journalText, setJournalText] = useState("I've been feeling fatigued lately and my sleep schedule is very erratic.");
-  const [baselineMap, setBaselineMap] = useState("90");
-  const [activeTab, setActiveTab] = useState<"dashboard" | "intake">("dashboard");
+  const [journalText, setJournalText] = useState("I've been feeling stressed and sleep-deprived this week.");
+  const [baselineMap, setBaselineMap] = useState(90);
+  const [useCamera, setUseCamera] = useState(false);
+  const [simulateSpoof, setSimulateSpoof] = useState(false);
 
   const [busyHealth, setBusyHealth] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
@@ -106,33 +147,26 @@ export default function Page() {
       const res = await fetch("/api/health-all");
       setHealthData((await res.json()) as HealthResponse);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Infrastructure verification failed");
+      setError(e instanceof Error ? e.message : "Health check failed");
     } finally {
       setBusyHealth(false);
     }
   }
 
-  async function runWorkflow(e: React.FormEvent) {
-    e.preventDefault();
+  async function runWorkflow() {
     setBusyRun(true);
     setError(null);
     try {
       const res = await fetch("/api/run-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          journalText, 
-          baselineMap: Number(baselineMap), 
-          useCamera: true, 
-          simulateSpoof: false 
-        }),
+        body: JSON.stringify({ journalText, baselineMap, useCamera, simulateSpoof }),
       });
       const json = (await res.json()) as WorkflowResponse;
       setRunData(json);
       if (json.error) setError(json.error);
-      else setActiveTab("dashboard");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Clinical workflow initiation failed");
+      setError(e instanceof Error ? e.message : "Workflow failed");
     } finally {
       setBusyRun(false);
     }
@@ -142,263 +176,306 @@ export default function Page() {
   const allHealthy = healthData && Object.values(healthData).every((v) => v.ok);
 
   return (
-    <div style={{ background: "var(--bg-gradient)", minHeight: "100vh" }}>
+    <>
       <Navbar serviceStatus={serviceStatus} />
-      
-      {/* Decorative Background Elements */}
-      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "800px", overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "-10%", left: "-5%", width: "50%", height: "60%", background: "radial-gradient(circle, rgba(13,148,136,0.08) 0%, rgba(255,255,255,0) 70%)", borderRadius: "50%" }} />
-        <div style={{ position: "absolute", top: "20%", right: "-10%", width: "60%", height: "80%", background: "radial-gradient(circle, rgba(2,132,199,0.06) 0%, rgba(255,255,255,0) 70%)", borderRadius: "50%" }} />
-      </div>
-
-      <main className="container" style={{ padding: "60px 20px 100px", position: "relative", zIndex: 1 }}>
+      <main className="container" style={{ padding: "40px 20px 80px" }}>
 
         {/* Hero */}
-        <section className="animate-slide-up" style={{ marginBottom: 64, textAlign: "center", maxWidth: 900, margin: "0 auto 64px" }}>
-          <div className="tag" style={{ margin: "0 auto 24px", padding: "6px 16px", fontSize: "0.85rem", background: "#f8fafc", borderColor: "#e2e8f0", color: "#64748b" }}>
-            <span style={{ color: "var(--accent-teal)" }}>✦</span> Aura Health Clinical Intelligence
+        <section className="animate-slide-up" style={{ marginBottom: 48, textAlign: "center" }}>
+          <div
+            className="tag"
+            style={{ margin: "0 auto 16px", display: "inline-flex", fontSize: "0.8rem" }}
+          >
+            🏥 IIT-BHU Clinical Decision Support Platform
           </div>
-          <h1 style={{ marginBottom: 24, fontSize: "clamp(3rem, 6vw, 4.5rem)" }}>
-            A New Standard for <br />
-            <span style={{ color: "var(--accent-teal)" }}>Diagnostic Precision</span>
+          <h1 style={{ fontSize: "clamp(2.4rem, 6vw, 4rem)", marginBottom: 16 }}>
+            Health AI{" "}
+            <span
+              style={{
+                background: "linear-gradient(135deg, #14b8a6, #38bdf8, #a78bfa)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}
+            >
+              5-Pillar System
+            </span>
           </h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: "1.25rem", lineHeight: 1.6, marginBottom: 40, maxWidth: 700, margin: "0 auto 40px" }}>
-            Unifying multi-modal AI spanning psychological phenotyping, remote cardiovascular telemetry, and neuromotor tracking into one seamless clinical interface.
+          <p style={{ color: "#94a3b8", maxWidth: 640, margin: "0 auto 32px", fontSize: "1.1rem", lineHeight: 1.7 }}>
+            Mental health phenotyping · Non-invasive PPG · Blood hemoglobin estimate · Nervous telemetry · HuatuoGPT-o1 fusion.<br />
+            All powered by pre-trained models. No wearables required.
           </p>
 
-          {/* CTA controls */}
-          <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginBottom: 24 }}>
-            <button className="btn btn-primary" onClick={() => setActiveTab("intake")}>
-              Begin Patient Intake
+          {/* CTA buttons */}
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <button className="btn btn-primary" onClick={() => void checkHealth()} disabled={busyHealth}>
+              {busyHealth ? <><span className="spinner" /> Checking…</> : "🔍 Check All Services"}
             </button>
-            <button className="btn btn-secondary" onClick={() => void checkHealth()} disabled={busyHealth}>
-              {busyHealth ? <><span className="spinner spinner-dark" /> Verifying Systems...</> : "Verify Infrastructure"}
+            <button className="btn btn-secondary" onClick={() => void runWorkflow()} disabled={busyRun}>
+              {busyRun ? <><span className="spinner" /> Running…</> : "⚡ Quick Run Workflow"}
             </button>
           </div>
 
           {allHealthy && (
-            <div style={{ color: "var(--accent-teal)", fontSize: "0.9rem", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <span className="status-dot status-dot-ok" /> Infrastructure Online & Secure
+            <div style={{ marginTop: 12, color: "#22c55e", fontSize: "0.875rem", fontWeight: 600 }}>
+              ✅ All {SERVICE_KEYS.length} services are operational
+            </div>
+          )}
+          {error && (
+            <div className="disclaimer" style={{ marginTop: 16, maxWidth: 600, marginLeft: "auto", marginRight: "auto" }}>
+              ⚠ {error}
             </div>
           )}
         </section>
 
-        {/* Tab content area */}
-        {activeTab === "intake" ? (
-          <section className="animate-slide-up" style={{ maxWidth: 720, margin: "0 auto 64px" }}>
-            <div className="glass-card" style={{ padding: 40 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
-                <div>
-                  <h2 style={{ marginBottom: 8 }}>Clinical Intake Form</h2>
-                  <p className="text-muted">Enter foundational metrics to contextualize the ML inference pipelines.</p>
+        {/* 3-Pillar cards */}
+        <section style={{ marginBottom: 48 }}>
+          <div className="label" style={{ marginBottom: 20, textAlign: "center" }}>Architecture Overview</div>
+          <div className="grid-3">
+            {PILLARS.map((p) => (
+              <Link key={p.href} href={p.href} style={{ textDecoration: "none" }}>
+                <div
+                  className="glass-card"
+                  style={{
+                    padding: 28,
+                    cursor: "pointer",
+                    borderTop: `2px solid ${p.accent}`,
+                    height: "100%",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                    <div
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 12,
+                        background: p.tagBg,
+                        border: `1px solid ${p.tagBorder}`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "1.5rem",
+                      }}
+                    >
+                      {p.icon}
+                    </div>
+                    <div>
+                      <span
+                        className="tag"
+                        style={{ background: p.tagBg, color: p.tagColor, borderColor: p.tagBorder, fontSize: "0.7rem" }}
+                      >
+                        {p.tag}
+                      </span>
+                      <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: 2 }}>{p.subtitle}</div>
+                    </div>
+                  </div>
+                  <h3 style={{ marginBottom: 8, color: p.accent }}>{p.title}</h3>
+                  <p className="text-sm text-muted">{p.description}</p>
+                  <div
+                    style={{
+                      marginTop: 16,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: p.accent,
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Open Module →
+                  </div>
                 </div>
-                <button className="btn" style={{ background: "transparent", color: "var(--text-muted)", padding: 0 }} onClick={() => setActiveTab("dashboard")}>✕</button>
-              </div>
+              </Link>
+            ))}
+          </div>
+        </section>
 
-              {error && (
-                <div className="disclaimer" style={{ marginBottom: 32 }}>
-                  <span className="disclaimer-icon">⚠</span> 
-                  <span>{error}</span>
+        {/* Service health grid */}
+        <section style={{ marginBottom: 40 }}>
+          <div className="label" style={{ marginBottom: 16 }}>Service Status</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            {SERVICE_KEYS.map((key) => {
+              const status = healthData?.[key];
+              const isOk = status?.ok;
+              const notChecked = !healthData;
+              return (
+                <div
+                  key={key}
+                  className="glass-card"
+                  style={{
+                    padding: "14px 16px",
+                    borderLeft: `3px solid ${notChecked ? "#334155" : isOk ? "#22c55e" : "#ef4444"}`,
+                  }}
+                >
+                  <div className="label" style={{ marginBottom: 4 }}>{key}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span
+                      className={`status-dot ${notChecked ? "status-dot-idle" : isOk ? "status-dot-ok" : "status-dot-err"}`}
+                    />
+                    <span style={{ fontWeight: 700, fontSize: "0.875rem", color: notChecked ? "#475569" : isOk ? "#22c55e" : "#ef4444" }}>
+                      {notChecked ? "Unchecked" : isOk ? "Healthy" : "Down"}
+                    </span>
+                  </div>
+                  {status?.message && <div className="text-xs text-muted mt-2">{status.message}</div>}
                 </div>
-              )}
+              );
+            })}
+          </div>
+        </section>
 
-              <form onSubmit={runWorkflow} className="flex-col gap-6">
-                <div>
-                  <div className="label" style={{ marginBottom: 8 }}>Patient Identifier</div>
+        {/* Quick input */}
+        <section style={{ marginBottom: 40 }}>
+          <div className="glass-card" style={{ padding: 28 }}>
+            <h2 style={{ marginBottom: 20 }}>⚡ Quick Workflow Run</h2>
+            <div className="grid-2" style={{ gap: 16, marginBottom: 20 }}>
+              <label>
+                <div className="label" style={{ marginBottom: 6 }}>Journal Text</div>
+                <textarea
+                  className="input-dark"
+                  rows={3}
+                  value={journalText}
+                  onChange={(e) => setJournalText(e.target.value)}
+                />
+              </label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <label>
+                  <div className="label" style={{ marginBottom: 6 }}>Baseline MAP (mmHg)</div>
                   <input
-                    className="input-premium"
-                    type="text"
-                    value={patientId}
-                    onChange={(e) => setPatientId(e.target.value)}
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <div className="label" style={{ marginBottom: 8 }}>Clinical Notes / Patient Journal</div>
-                  <textarea
-                    className="input-premium"
-                    value={journalText}
-                    onChange={(e) => setJournalText(e.target.value)}
-                    placeholder="E.g., Patient reports lethargy, anxiety over past 2 weeks..."
-                    required
-                  />
-                  <p className="text-xs text-muted" style={{ marginTop: 8 }}>The text is analyzed strictly by the Digital Phenotype LSTM model.</p>
-                </div>
-
-                <div>
-                  <div className="label" style={{ marginBottom: 8 }}>Calibrated Baseline MAP (mmHg)</div>
-                  <input
-                    className="input-premium"
+                    className="input-dark"
                     type="number"
                     value={baselineMap}
-                    onChange={(e) => setBaselineMap(e.target.value)}
-                    min={40} max={200}
-                    required
+                    min={1}
+                    onChange={(e) => setBaselineMap(Number(e.target.value))}
                   />
-                  <p className="text-xs text-muted" style={{ marginTop: 8 }}>Used as anchor for remote photoplethysmography estimations.</p>
-                </div>
-
-                <div className="divider" style={{ margin: "24px 0" }} />
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 16 }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("dashboard")}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={busyRun}>
-                    {busyRun ? <><span className="spinner" /> Analyzing...</> : "Execute Full Diagnostic Suite"}
-                  </button>
-                </div>
-              </form>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={useCamera}
+                    onChange={(e) => setUseCamera(e.target.checked)}
+                    style={{ accentColor: "#14b8a6", width: 16, height: 16 }}
+                  />
+                  <span className="text-sm">Include camera metrics</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={simulateSpoof}
+                    onChange={(e) => setSimulateSpoof(e.target.checked)}
+                    style={{ accentColor: "#ef4444", width: 16, height: 16 }}
+                  />
+                  <span className="text-sm">Simulate spoof attack (test anti-spoofing)</span>
+                </label>
+              </div>
             </div>
-          </section>
-        ) : (
-          <>
-            {/* Diagnostic Results (if available) */}
-            {runData && (
-              <section className="animate-slide-up" style={{ marginBottom: 64 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-                  <h2 style={{ margin: 0 }}>Clinical Synthesis Report</h2>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <div className="text-muted font-medium">Patient: {patientId}</div>
-                    {overallRisk && <RiskBadge risk={overallRisk} size="md" label="Aggregate Risk" />}
-                  </div>
-                </div>
+          </div>
+        </section>
 
-                {/* Pillar metric cards */}
-                <div className="grid-3" style={{ marginBottom: 24 }}>
-                  <MetricCard
-                    icon="🧠"
-                    label="Psychiatric Index"
-                    value={runData.depression?.depression_score !== undefined ? runData.depression.depression_score.toFixed(3) : "—"}
-                    subtext={runData.depression?.error_message ? "Pipeline Error" : `Phenotype Risk: ${runData.depression?.risk_band ?? "N/A"}`}
-                    accent={runData.depression?.risk_band === "high" ? "var(--risk-high)" : runData.depression?.risk_band === "medium" ? "var(--risk-medium)" : "var(--accent-teal)"}
-                  />
-                  <MetricCard
-                    icon="💓"
-                    label="Cardiovascular MAP"
-                    value={runData.ppg?.map !== undefined ? runData.ppg.map.toFixed(1) : "—"}
-                    unit="mmHg"
-                    subtext={runData.ppg?.risk_band ? `Vascular Risk: ${runData.ppg.risk_band}` : "N/A"}
-                    accent="var(--accent-blue)"
-                    trend={runData.ppg?.change_map !== undefined ? (runData.ppg.change_map > 5 ? "up" : runData.ppg.change_map < -5 ? "down" : "stable") : null}
-                  />
-                  <MetricCard
-                    icon="⚡"
-                    label="Neuromotor Status"
-                    value={runData.kineticare?.risk_band ?? "—"}
-                    subtext={`Telemetry Quality: ${runData.kineticare?.session_quality ?? "N/A"}`}
-                    accent="var(--accent-purple)"
-                  />
-                </div>
+        {/* Results */}
+        {runData && (
+          <section className="animate-slide-up" style={{ marginBottom: 40 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+              <h2 style={{ margin: 0 }}>Workflow Results</h2>
+              {overallRisk && <RiskBadge risk={overallRisk} size="md" label="Overall" />}
+            </div>
 
-                {/* Orchestrator AI Report */}
-                {runData.orchestrator?.summary && (
-                  <div className="glass-card" style={{ padding: 32, marginBottom: 24 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                      <div className="label">🤖 Medical Reasoning Engine</div>
-                      <span className="tag" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569" }}>{runData.orchestrator.model_used}</span>
+            {/* Pillar metric cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 20 }}>
+              <MetricCard
+                icon="🧠"
+                label="Depression Score"
+                value={runData.depression?.depression_score?.toFixed(3) ?? "—"}
+                subtext={`Risk: ${runData.depression?.risk_band ?? "—"} · Confidence: ${runData.depression?.confidence ? Math.round(runData.depression.confidence * 100) + "%" : "—"}`}
+                accent={runData.depression?.risk_band === "high" ? "#ef4444" : runData.depression?.risk_band === "medium" ? "#f59e0b" : "#14b8a6"}
+              />
+              <MetricCard
+                icon="💓"
+                label="Estimated MAP"
+                value={runData.ppg?.map?.toFixed(1) ?? "—"}
+                unit="mmHg"
+                subtext={`Risk: ${runData.ppg?.risk_band ?? "—"} · Ratio: ${runData.ppg?.ratio_map?.toFixed(3) ?? "—"}`}
+                accent="#f472b6"
+                trend={runData.ppg?.change_map !== undefined ? (runData.ppg.change_map > 5 ? "up" : runData.ppg.change_map < -5 ? "down" : "stable") : null}
+              />
+              <MetricCard
+                icon="⚡"
+                label="KinetiCare Risk"
+                value={runData.kineticare?.risk_band ?? "—"}
+                subtext={`Session: ${runData.kineticare?.session_quality ?? "—"}`}
+                accent="#a78bfa"
+              />
+              <MetricCard
+                icon="🩸"
+                label="Hemoglobin"
+                value={runData.blood?.hemoglobin_g_dl?.toFixed(2) ?? "—"}
+                unit="g/dL"
+                subtext={`Risk: ${runData.blood?.risk_band ?? "—"} · Confidence: ${runData.blood?.confidence ? Math.round(runData.blood.confidence * 100) + "%" : "—"}`}
+                accent={runData.blood?.risk_band === "high" ? "#ef4444" : runData.blood?.risk_band === "medium" ? "#f59e0b" : "#14b8a6"}
+              />
+              <MetricCard
+                icon="🖐"
+                label="Nervous Risk"
+                value={runData.nervous?.risk_band ?? "—"}
+                subtext={`Tremor: ${runData.nervous?.tremor_hz?.toFixed(2) ?? "—"} Hz · Tap: ${runData.nervous?.tap_rate_hz?.toFixed(2) ?? "—"} Hz`}
+                accent={runData.nervous?.risk_band === "high" ? "#ef4444" : runData.nervous?.risk_band === "medium" ? "#f59e0b" : "#0ea5e9"}
+              />
+            </div>
+
+            {/* Orchestrator summary */}
+            {runData.orchestrator?.summary && (
+              <div className="glass-card" style={{ padding: 24, marginBottom: 16 }}>
+                <div className="label" style={{ marginBottom: 8 }}>🤖 HuatuoGPT-o1 Clinical Synthesis</div>
+                <p style={{ lineHeight: 1.7, color: "#cbd5e1", marginBottom: 12 }}>{runData.orchestrator.summary}</p>
+
+                {runData.orchestrator.llm_response && (
+                  <>
+                    <div className="divider" />
+                    <div className="label" style={{ marginBottom: 8 }}>
+                      AI Reasoning
+                      <span className="tag" style={{ marginLeft: 8, background: runData.orchestrator.model_used?.includes("fallback") ? "rgba(245,158,11,0.12)" : "rgba(167,139,250,0.12)", color: runData.orchestrator.model_used?.includes("fallback") ? "#fbbf24" : "#a78bfa", borderColor: "transparent", fontSize: "0.65rem" }}>
+                        {runData.orchestrator.model_used}
+                      </span>
                     </div>
-                    <p style={{ lineHeight: 1.8, color: "var(--text-primary)", fontSize: "1.1rem", fontWeight: 500, marginBottom: 24 }}>
-                      {runData.orchestrator.summary}
+                    <p style={{ lineHeight: 1.7, color: "#94a3b8", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>
+                      {runData.orchestrator.llm_response}
                     </p>
-
-                    {runData.orchestrator.llm_response && (
-                      <div style={{ background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "24px" }}>
-                        <div className="label" style={{ marginBottom: 12, color: "var(--accent-teal)" }}>Clinical Inference Trace</div>
-                        <p style={{ lineHeight: 1.8, color: "var(--text-secondary)", fontSize: "0.95rem", whiteSpace: "pre-wrap" }}>
-                          {runData.orchestrator.llm_response}
-                        </p>
-                      </div>
-                    )}
-
-                    {runData.orchestrator.quality_caveat && (
-                      <div className="disclaimer" style={{ marginTop: 24 }}>
-                        <span className="disclaimer-icon">ℹ</span> {runData.orchestrator.quality_caveat}
-                      </div>
-                    )}
-                  </div>
+                  </>
                 )}
 
-                {/* Recommended Protocols */}
-                {runData.orchestrator?.next_actions && (
-                  <div className="glass-card" style={{ padding: 32 }}>
-                    <div className="label" style={{ marginBottom: 20 }}>Recommended Protocols</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                      {runData.orchestrator.next_actions.map((action, i) => (
-                        <div key={i} style={{ display: "flex", gap: 16, alignItems: "flex-start", background: "#f8fafc", padding: "16px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
-                          <span style={{ color: "var(--accent-teal)", fontWeight: 700, fontSize: "1.1rem", lineHeight: 1 }}>0{i + 1}</span>
-                          <span style={{ fontSize: "1rem", color: "var(--text-primary)", fontWeight: 500 }}>{action}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                {runData.orchestrator.quality_caveat && (
+                  <div className="disclaimer" style={{ marginTop: 12 }}>{runData.orchestrator.quality_caveat}</div>
                 )}
-              </section>
+              </div>
             )}
 
-            {/* Modules Grid */}
-            <section style={{ marginBottom: 64 }}>
-              <div className="label" style={{ marginBottom: 24, textAlign: "center" }}>Diagnostic Modalities</div>
-              <div className="grid-3">
-                {PILLARS.map((p) => (
-                  <Link key={p.href} href={p.href} style={{ textDecoration: "none" }}>
-                    <div className="glass-card hover-float" style={{ padding: 32, display: "flex", flexDirection: "column", height: "100%" }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-                        <div style={{ width: 56, height: 56, borderRadius: 16, background: p.tagBg, border: `1px solid ${p.tagBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.8rem" }}>
-                          {p.icon}
-                        </div>
-                        <span className="tag" style={{ background: p.tagBg, color: p.tagColor, borderColor: p.tagBorder }}>
-                          {p.tag}
-                        </span>
-                      </div>
-                      <h3 style={{ marginBottom: 6, color: "var(--text-primary)" }}>{p.title}</h3>
-                      <div className="font-bold text-xs" style={{ color: p.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>
-                        {p.subtitle}
-                      </div>
-                      <p className="text-sm text-muted" style={{ lineHeight: 1.6, flexGrow: 1 }}>{p.description}</p>
-                      
-                      <div className="divider" style={{ margin: "20px 0" }} />
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", color: p.accent, fontSize: "0.9rem", fontWeight: 600 }}>
-                        <span>Explore Modality</span>
-                        <span>→</span>
-                      </div>
+            {/* Next actions */}
+            {runData.orchestrator?.next_actions && (
+              <div className="glass-card" style={{ padding: 24 }}>
+                <div className="label" style={{ marginBottom: 12 }}>Recommended Actions</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {runData.orchestrator.next_actions.map((action, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <span style={{ color: "#14b8a6", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>
+                      <span style={{ fontSize: "0.9rem", color: "#cbd5e1" }}>{action}</span>
                     </div>
-                  </Link>
-                ))}
+                  ))}
+                </div>
               </div>
-            </section>
-
-            {/* Infrastructure Health */}
-            <section>
-              <div className="label" style={{ marginBottom: 20 }}>Infrastructure Telemetry</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
-                {SERVICE_KEYS.map((key) => {
-                  const status = healthData?.[key];
-                  const isOk = status?.ok;
-                  const notChecked = !healthData;
-                  return (
-                    <div key={key} className="glass-card" style={{ padding: "16px 20px" }}>
-                      <div className="label" style={{ marginBottom: 8, fontSize: "0.75rem" }}>{key}</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span className={`status-dot ${notChecked ? "status-dot-idle" : isOk ? "status-dot-ok" : "status-dot-err"}`} />
-                        <span style={{ fontWeight: 700, fontSize: "0.95rem", color: notChecked ? "var(--text-muted)" : isOk ? "var(--risk-low)" : "var(--risk-high)" }}>
-                          {notChecked ? "Standby" : isOk ? "Nominal" : "Disrupted"}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          </>
+            )}
+          </section>
         )}
 
-        {/* Footer */}
-        <footer style={{ marginTop: 80, textAlign: "center", paddingTop: 40, borderTop: "1px solid var(--border-subtle)" }}>
-          <div className="disclaimer" style={{ display: "inline-flex", background: "transparent", border: "1px solid #e2e8f0", color: "#64748b" }}>
-            <span className="disclaimer-icon">⚕</span> This system is an investigatory clinical decision support tool. Validation by a licensed physician is strictly required.
+        {/* Patient info */}
+        {runData?.patient_id && (
+          <div className="text-xs text-muted" style={{ textAlign: "center" }}>
+            Patient Session: {runData.patient_id}
           </div>
-        </footer>
+        )}
+
+        {/* Footer disclaimer */}
+        <div className="disclaimer" style={{ marginTop: 40, textAlign: "center" }}>
+          ⚕ This system is a <strong>clinical decision support tool</strong>, not a diagnostic device. All outputs must be validated by a licensed medical professional.
+        </div>
       </main>
-    </div>
+    </>
   );
 }

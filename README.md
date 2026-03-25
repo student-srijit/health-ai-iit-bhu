@@ -72,5 +72,30 @@ npm run dev:all
 
 Navigate to `http://localhost:3000` on your smartphone (or desktop) to begin your non-invasive clinical capture.
 
+## Persistence and Longitudinal APIs (Phase 1)
+
+The web app now supports MongoDB-backed persistence for assessments, prescriptions, and monitoring workflows.
+
+### Environment variables (apps/web)
+
+```bash
+MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_DB_NAME=health_ai
+```
+
+### New API endpoints
+
+- `POST /api/prescriptions` creates clinician prescriptions with interaction warnings and lifecycle status.
+- `GET /api/prescriptions?patientId=<id>` lists patient prescriptions.
+- `POST /api/monitoring-schedules` upserts per-patient daily check schedules.
+- `GET /api/monitoring-schedules?patientId=<id>` reads current patient schedule.
+- `POST /api/monitoring-checkins` stores scheduled/completed/missed/escalated check-ins.
+- `GET /api/monitoring-checkins?patientId=<id>&days=30` returns recent check-ins.
+- `GET /api/patient-history?patientId=<id>&limit=50&days=30` returns longitudinal patient timeline.
+
+### Docker local database
+
+`infra/docker-compose.yml` now includes a local `mongodb` service exposed on port `27017`.
+
 ---
 *Built for the future of decentralized, zero-UI Clinical Diagnostics.*

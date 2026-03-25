@@ -8,6 +8,8 @@ const navLinks = [
   { href: "/", label: "Dashboard", icon: "🏥" },
   { href: "/pillar-depression", label: "Mental Health", icon: "🧠" },
   { href: "/pillar-ppg", label: "Cardiovascular", icon: "💓" },
+  { href: "/pillar-blood", label: "Blood Health", icon: "🩸" },
+  { href: "/pillar-nervous", label: "Nervous System", icon: "🖐" },
   { href: "/pillar-orchestrator", label: "Medical Brain", icon: "🤖" },
 ];
 
