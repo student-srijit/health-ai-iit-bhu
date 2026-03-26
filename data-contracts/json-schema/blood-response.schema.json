@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BloodHemoglobinPredictResponse",
+  "type": "object",
+  "required": [
+    "patient_id",
+    "hemoglobin_g_dl",
+    "risk_band",
+    "confidence",
+    "roi_quality",
+    "method"
+  ],
+  "properties": {
+    "patient_id": { "type": "string" },
+    "hemoglobin_g_dl": { "type": "number", "minimum": 0, "maximum": 25 },
+    "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "roi_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+    "method": { "type": "string" },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

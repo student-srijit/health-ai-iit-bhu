@@ -1,0 +1,73 @@
+version: "3.9"
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: health_ai
+    volumes:
+      - mongo_data:/data/db
+
+  depression-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/depression-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn depression_service.main:app --host 0.0.0.0 --port 8001"
+    ports:
+      - "8001:8001"
+
+  ppg-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/ppg-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn ppg_service.main:app --host 0.0.0.0 --port 8002"
+    ports:
+      - "8002:8002"
+
+  orchestrator-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/orchestrator-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8003"
+    ports:
+      - "8003:8003"
+
+  kineticare-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/kineticare-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn kineticare_service.main:app --host 0.0.0.0 --port 8004"
+    ports:
+      - "8004:8004"
+
+  blood-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/blood-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn blood_service.main:app --host 0.0.0.0 --port 8005"
+    ports:
+      - "8005:8005"
+
+  nervous-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../services/nervous-service/src:/app
+      - ../requirements-backend.txt:/tmp/requirements.txt
+    command: sh -c "pip install -r /tmp/requirements.txt && uvicorn nervous_service.main:app --host 0.0.0.0 --port 8006"
+    ports:
+      - "8006:8006"
+
+volumes:
+  mongo_data:

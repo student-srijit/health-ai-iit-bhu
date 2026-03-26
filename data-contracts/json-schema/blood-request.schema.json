@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BloodHemoglobinPredictRequest",
+  "type": "object",
+  "required": ["patient_id", "image_base64"],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "image_base64": { "type": "string", "minLength": 100 }
+  },
+  "additionalProperties": false
+}

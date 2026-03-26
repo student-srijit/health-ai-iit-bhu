@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KinetiCareRiskResponse",
+  "type": "object",
+  "required": ["patient_id", "risk_band", "session_quality", "signals_used"],
+  "properties": {
+    "patient_id": { "type": "string" },
+    "risk_band": { "type": "string", "enum": ["low", "medium", "high"] },
+    "session_quality": {
+      "type": "string",
+      "enum": ["good", "warning", "poor"]
+    },
+    "signals_used": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["keystroke", "imu"] }
+    },
+    "feature_summary": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    }
+  },
+  "additionalProperties": false
+}

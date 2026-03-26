@@ -1,0 +1,22 @@
+{
+  "web": {
+    "ok": true,
+    "message": "web:ok"
+  },
+  "depression": {
+    "ok": true,
+    "message": "depression-service:ok"
+  },
+  "ppg": {
+    "ok": true,
+    "message": "ppg-service:ok"
+  },
+  "orchestrator": {
+    "ok": true,
+    "message": "orchestrator-service:ok"
+  },
+  "kineticare": {
+    "ok": true,
+    "message": "kineticare-service:ok"
+  }
+}

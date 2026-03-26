@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DepressionPredictRequest",
+  "type": "object",
+  "required": ["patient_id", "journal_text"],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "journal_text": { "type": "string", "minLength": 1 },
+    "audio_features": {
+      "type": "array",
+      "items": { "type": "number" },
+      "default": []
+    },
+    "video_features": {
+      "type": "array",
+      "items": { "type": "number" },
+      "default": []
+    },
+    "camera_metrics": {
+      "type": "object",
+      "required": [
+        "frame_quality_score",
+        "blur_score",
+        "face_tracking_confidence",
+        "spoof_probability",
+        "accepted_window_ratio",
+        "laplacian_variance",
+        "frequency_spoof_score"
+      ],
+      "properties": {
+        "frame_quality_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "blur_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "face_tracking_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "spoof_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "accepted_window_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "laplacian_variance": { "type": "number", "minimum": 0 },
+        "frequency_spoof_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

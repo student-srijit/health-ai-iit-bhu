@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PpgPredictRequest",
+  "type": "object",
+  "required": ["patient_id", "ppg_signal", "sampling_rate_hz", "baseline_map"],
+  "properties": {
+    "patient_id": { "type": "string", "minLength": 1 },
+    "ppg_signal": {
+      "type": "array",
+      "minItems": 50,
+      "items": { "type": "number" }
+    },
+    "sampling_rate_hz": { "type": "number", "minimum": 1 },
+    "baseline_map": { "type": "number", "minimum": 1 },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}
